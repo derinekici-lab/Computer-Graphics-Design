@@ -16,9 +16,10 @@ namespace CGP
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new DoubleBuffering());
+            Application.Run(new Triangles());
 
 
         }
     }
 }
+
