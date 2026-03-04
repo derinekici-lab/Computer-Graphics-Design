@@ -1,0 +1,9 @@
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.csproj.AssemblyReference.cache
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.Properties.Resources.resources
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.csproj.GenerateResource.cache
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.csproj.CoreCompileInputs.cache
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\bin\Debug\Prac2DTransformations.exe.config
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\bin\Debug\Prac2DTransformations.exe
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\bin\Debug\Prac2DTransformations.pdb
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.exe
+C:\Users\derin\OneDrive\Masaüstü\Computer Graphics Programming\Prac2DTransformations\Prac2DTransformations\obj\Debug\Prac2DTransformations.pdb
