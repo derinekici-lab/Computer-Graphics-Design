@@ -1,0 +1,543 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace GrafPack
+{
+    public partial class GrafPack : Form
+    {
+        private enum EditorMode
+        {
+            None,
+            CreateSquare,
+            CreateTriangle,
+            CreateCircle,
+            Select
+        }
+
+        private readonly List<Shape> shapes = new List<Shape>();
+        private Shape selectedShape = null;
+
+        private EditorMode currentMode = EditorMode.None;
+
+        private int clickNumber = 0;
+        private Point firstClick;
+        private Point secondClick;
+
+        public GrafPack()
+        {
+            InitializeComponent();
+
+            this.SetStyle(ControlStyles.ResizeRedraw, true);
+            this.DoubleBuffered = true;
+            this.WindowState = FormWindowState.Maximized;
+            this.BackColor = Color.White;
+            this.KeyPreview = true;
+            this.Text = "GrafPack - 2D Drawing Application";
+
+            BuildMenu();
+
+            this.MouseClick += mouseClick;
+            this.KeyDown += GrafPack_KeyDown;
+        }
+
+        private void BuildMenu()
+        {
+            MainMenu mainMenu = new MainMenu();
+
+            MenuItem createItem = new MenuItem("&Create");
+            MenuItem squareItem = new MenuItem("&Square");
+            MenuItem triangleItem = new MenuItem("&Triangle");
+            MenuItem circleItem = new MenuItem("&Circle");
+
+            MenuItem selectItem = new MenuItem("&Select");
+
+            MenuItem transformItem = new MenuItem("&Transform");
+            MenuItem moveLeftItem = new MenuItem("Move &Left");
+            MenuItem moveRightItem = new MenuItem("Move &Right");
+            MenuItem moveUpItem = new MenuItem("Move &Up");
+            MenuItem moveDownItem = new MenuItem("Move &Down");
+            MenuItem rotateLeftItem = new MenuItem("Rotate &Left");
+            MenuItem rotateRightItem = new MenuItem("Rotate &Right");
+
+            MenuItem deleteItem = new MenuItem("&Delete");
+            MenuItem clearItem = new MenuItem("C&lear All");
+            MenuItem exitItem = new MenuItem("E&xit");
+
+            squareItem.Click += selectSquare;
+            triangleItem.Click += selectTriangle;
+            circleItem.Click += selectCircle;
+            selectItem.Click += selectShape;
+
+            moveLeftItem.Click += (s, e) => MoveSelected(-10, 0);
+            moveRightItem.Click += (s, e) => MoveSelected(10, 0);
+            moveUpItem.Click += (s, e) => MoveSelected(0, -10);
+            moveDownItem.Click += (s, e) => MoveSelected(0, 10);
+            rotateLeftItem.Click += (s, e) => RotateSelected(-15);
+            rotateRightItem.Click += (s, e) => RotateSelected(15);
+
+            deleteItem.Click += deleteShape;
+            clearItem.Click += clearAllShapes;
+            exitItem.Click += (s, e) => this.Close();
+
+            createItem.MenuItems.Add(squareItem);
+            createItem.MenuItems.Add(triangleItem);
+            createItem.MenuItems.Add(circleItem);
+
+            transformItem.MenuItems.Add(moveLeftItem);
+            transformItem.MenuItems.Add(moveRightItem);
+            transformItem.MenuItems.Add(moveUpItem);
+            transformItem.MenuItems.Add(moveDownItem);
+            transformItem.MenuItems.Add("-");
+            transformItem.MenuItems.Add(rotateLeftItem);
+            transformItem.MenuItems.Add(rotateRightItem);
+
+            mainMenu.MenuItems.Add(createItem);
+            mainMenu.MenuItems.Add(selectItem);
+            mainMenu.MenuItems.Add(transformItem);
+            mainMenu.MenuItems.Add(deleteItem);
+            mainMenu.MenuItems.Add(clearItem);
+            mainMenu.MenuItems.Add(exitItem);
+
+            this.Menu = mainMenu;
+        }
+
+        private void selectSquare(object sender, EventArgs e)
+        {
+            ResetClickState();
+            currentMode = EditorMode.CreateSquare;
+            MessageBox.Show("Square mode selected.\nClick two opposite corners to create a square.");
+        }
+
+        private void selectTriangle(object sender, EventArgs e)
+        {
+            ResetClickState();
+            currentMode = EditorMode.CreateTriangle;
+            MessageBox.Show("Triangle mode selected.\nClick two points to define the bounding area.");
+        }
+
+        private void selectCircle(object sender, EventArgs e)
+        {
+            ResetClickState();
+            currentMode = EditorMode.CreateCircle;
+            MessageBox.Show("Circle mode selected.\nClick two points to define the diameter.");
+        }
+
+        private void selectShape(object sender, EventArgs e)
+        {
+            ResetClickState();
+            currentMode = EditorMode.Select;
+            MessageBox.Show("Select mode selected.\nClick a shape to select it.");
+        }
+
+        private void deleteShape(object sender, EventArgs e)
+        {
+            if (selectedShape != null)
+            {
+                shapes.Remove(selectedShape);
+                selectedShape = null;
+                Invalidate();
+            }
+            else
+            {
+                MessageBox.Show("No shape is selected.");
+            }
+        }
+
+        private void clearAllShapes(object sender, EventArgs e)
+        {
+            shapes.Clear();
+            selectedShape = null;
+            ResetClickState();
+            currentMode = EditorMode.None;
+            Invalidate();
+        }
+
+        private void mouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+                return;
+
+            if (currentMode == EditorMode.Select)
+            {
+                SelectShapeAtPoint(e.Location);
+                return;
+            }
+
+            if (currentMode == EditorMode.CreateSquare ||
+                currentMode == EditorMode.CreateTriangle ||
+                currentMode == EditorMode.CreateCircle)
+            {
+                if (clickNumber == 0)
+                {
+                    firstClick = e.Location;
+                    clickNumber = 1;
+                }
+                else
+                {
+                    secondClick = e.Location;
+                    clickNumber = 0;
+
+                    Shape newShape = null;
+
+                    if (currentMode == EditorMode.CreateSquare)
+                        newShape = new Square(firstClick, secondClick);
+                    else if (currentMode == EditorMode.CreateTriangle)
+                        newShape = new Triangle(firstClick, secondClick);
+                    else if (currentMode == EditorMode.CreateCircle)
+                        newShape = new CircleShape(firstClick, secondClick);
+
+                    if (newShape != null)
+                    {
+                        shapes.Add(newShape);
+                        SelectOnly(newShape);
+                        Invalidate();
+                    }
+
+                    currentMode = EditorMode.None;
+                }
+            }
+        }
+
+        private void SelectShapeAtPoint(Point p)
+        {
+            selectedShape = null;
+
+            for (int i = shapes.Count - 1; i >= 0; i--)
+            {
+                if (shapes[i].HitTest(p))
+                {
+                    selectedShape = shapes[i];
+                    break;
+                }
+            }
+
+            SelectOnly(selectedShape);
+            Invalidate();
+        }
+
+        private void SelectOnly(Shape shapeToSelect)
+        {
+            foreach (Shape s in shapes)
+                s.IsSelected = false;
+
+            if (shapeToSelect != null)
+                shapeToSelect.IsSelected = true;
+        }
+
+        private void MoveSelected(float dx, float dy)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                return;
+            }
+
+            selectedShape.Move(dx, dy);
+            Invalidate();
+        }
+
+        private void RotateSelected(float angleDeg)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                return;
+            }
+
+            selectedShape.Rotate(angleDeg);
+            Invalidate();
+        }
+
+        private void ResetClickState()
+        {
+            clickNumber = 0;
+        }
+
+        private void GrafPack_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (selectedShape == null)
+                return;
+
+            if (e.KeyCode == Keys.Left)
+            {
+                MoveSelected(-10, 0);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Right)
+            {
+                MoveSelected(10, 0);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Up)
+            {
+                MoveSelected(0, -10);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Down)
+            {
+                MoveSelected(0, 10);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Q)
+            {
+                RotateSelected(-15);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.E)
+            {
+                RotateSelected(15);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Delete)
+            {
+                shapes.Remove(selectedShape);
+                selectedShape = null;
+                Invalidate();
+                e.Handled = true;
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+
+            foreach (Shape shape in shapes)
+                shape.Draw(e.Graphics);
+        }
+
+        [STAThread]
+        public static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new GrafPack());
+        }
+    }
+
+    abstract class Shape
+    {
+        public bool IsSelected { get; set; }
+
+        public abstract void Draw(Graphics g);
+        public abstract void Move(float dx, float dy);
+        public abstract void Rotate(float angleDeg);
+        public abstract bool HitTest(Point p);
+        public abstract PointF GetCentre();
+
+        protected PointF RotatePoint(PointF point, PointF pivot, float angleDeg)
+        {
+            float rad = angleDeg * (float)Math.PI / 180f;
+            float cos = (float)Math.Cos(rad);
+            float sin = (float)Math.Sin(rad);
+
+            float tx = point.X - pivot.X;
+            float ty = point.Y - pivot.Y;
+
+            float rx = (tx * cos) - (ty * sin);
+            float ry = (tx * sin) + (ty * cos);
+
+            return new PointF(rx + pivot.X, ry + pivot.Y);
+        }
+
+        protected void DrawPolyline(Graphics g, Pen pen, PointF[] pts, bool closed)
+        {
+            for (int i = 0; i < pts.Length - 1; i++)
+            {
+                g.DrawLine(pen, pts[i], pts[i + 1]);
+            }
+
+            if (closed && pts.Length > 2)
+            {
+                g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
+            }
+        }
+    }
+
+    abstract class PolygonShape : Shape
+    {
+        protected PointF[] points;
+
+        public override void Draw(Graphics g)
+        {
+            using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
+            {
+                DrawPolyline(g, pen, points, true);
+            }
+
+            if (IsSelected)
+            {
+                foreach (PointF pt in points)
+                {
+                    g.FillRectangle(Brushes.Blue, pt.X - 3, pt.Y - 3, 6, 6);
+                }
+            }
+        }
+
+        public override void Move(float dx, float dy)
+        {
+            for (int i = 0; i < points.Length; i++)
+            {
+                points[i] = new PointF(points[i].X + dx, points[i].Y + dy);
+            }
+        }
+
+        public override void Rotate(float angleDeg)
+        {
+            PointF centre = GetCentre();
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                points[i] = RotatePoint(points[i], centre, angleDeg);
+            }
+        }
+
+        public override bool HitTest(Point p)
+        {
+            return PointInPolygon(p, points);
+        }
+
+        public override PointF GetCentre()
+        {
+            float sumX = 0;
+            float sumY = 0;
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                sumX += points[i].X;
+                sumY += points[i].Y;
+            }
+
+            return new PointF(sumX / points.Length, sumY / points.Length);
+        }
+
+        private bool PointInPolygon(Point p, PointF[] poly)
+        {
+            bool inside = false;
+
+            for (int i = 0, j = poly.Length - 1; i < poly.Length; j = i++)
+            {
+                bool intersect =
+                    ((poly[i].Y > p.Y) != (poly[j].Y > p.Y)) &&
+                    (p.X < (poly[j].X - poly[i].X) * (p.Y - poly[i].Y) / ((poly[j].Y - poly[i].Y) + 0.0001f) + poly[i].X);
+
+                if (intersect)
+                    inside = !inside;
+            }
+
+            return inside;
+        }
+    }
+
+    class Square : PolygonShape
+    {
+        public Square(Point keyPt, Point oppPt)
+        {
+            double xDiff = oppPt.X - keyPt.X;
+            double yDiff = oppPt.Y - keyPt.Y;
+            double xMid = (oppPt.X + keyPt.X) / 2.0;
+            double yMid = (oppPt.Y + keyPt.Y) / 2.0;
+
+            PointF p1 = new PointF(keyPt.X, keyPt.Y);
+            PointF p2 = new PointF((float)(xMid + yDiff / 2.0), (float)(yMid - xDiff / 2.0));
+            PointF p3 = new PointF(oppPt.X, oppPt.Y);
+            PointF p4 = new PointF((float)(xMid - yDiff / 2.0), (float)(yMid + xDiff / 2.0));
+
+            points = new PointF[] { p1, p2, p3, p4 };
+        }
+    }
+
+    class Triangle : PolygonShape
+    {
+        public Triangle(Point p1, Point p2)
+        {
+            float left = Math.Min(p1.X, p2.X);
+            float right = Math.Max(p1.X, p2.X);
+            float top = Math.Min(p1.Y, p2.Y);
+            float bottom = Math.Max(p1.Y, p2.Y);
+
+            PointF a = new PointF((left + right) / 2f, top);
+            PointF b = new PointF(right, bottom);
+            PointF c = new PointF(left, bottom);
+
+            points = new PointF[] { a, b, c };
+        }
+    }
+
+    class CircleShape : Shape
+    {
+        private PointF centre;
+        private float radius;
+
+        public CircleShape(Point p1, Point p2)
+        {
+            centre = new PointF((p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f);
+
+            float dx = p2.X - p1.X;
+            float dy = p2.Y - p1.Y;
+
+            radius = (float)Math.Sqrt(dx * dx + dy * dy) / 2f;
+
+            if (radius < 1)
+                radius = 1;
+        }
+
+        public override void Draw(Graphics g)
+        {
+            using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
+            {
+                PointF[] pts = BuildCirclePoints(72);
+                for (int i = 0; i < pts.Length - 1; i++)
+                {
+                    g.DrawLine(pen, pts[i], pts[i + 1]);
+                }
+                g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
+            }
+
+            if (IsSelected)
+            {
+                g.FillRectangle(Brushes.Blue, centre.X - 3, centre.Y - 3, 6, 6);
+            }
+        }
+
+        public override void Move(float dx, float dy)
+        {
+            centre = new PointF(centre.X + dx, centre.Y + dy);
+        }
+
+        public override void Rotate(float angleDeg)
+        {
+            // Rotating a circle around its own centre does not change its appearance.
+        }
+
+        public override bool HitTest(Point p)
+        {
+            float dx = p.X - centre.X;
+            float dy = p.Y - centre.Y;
+            float distance = (float)Math.Sqrt(dx * dx + dy * dy);
+
+            return distance <= radius;
+        }
+
+        public override PointF GetCentre()
+        {
+            return centre;
+        }
+
+        private PointF[] BuildCirclePoints(int segments)
+        {
+            PointF[] pts = new PointF[segments];
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (float)(2 * Math.PI * i / segments);
+                float x = centre.X + radius * (float)Math.Cos(angle);
+                float y = centre.Y + radius * (float)Math.Sin(angle);
+                pts[i] = new PointF(x, y);
+            }
+
+            return pts;
+        }
+    }
+}
