@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace GrafPack
 {
-    public partial class GrafPack : Form
+    public partial class Form1 : Form
     {
         private enum EditorMode
         {
@@ -25,7 +26,16 @@ namespace GrafPack
         private Point firstClick;
         private Point secondClick;
 
-        public GrafPack()
+        // Rubber-banding preview
+        private bool isPreviewing = false;
+        private Point previewStart;
+        private Point previewCurrent;
+
+        // Drag and drop
+        private bool isDraggingShape = false;
+        private Point lastMousePoint;
+
+        public Form1()
         {
             InitializeComponent();
 
@@ -39,7 +49,10 @@ namespace GrafPack
             BuildMenu();
 
             this.MouseClick += mouseClick;
-            this.KeyDown += GrafPack_KeyDown;
+            this.MouseMove += Form1_MouseMove;
+            this.MouseDown += Form1_MouseDown;
+            this.MouseUp += Form1_MouseUp;
+            this.KeyDown += Form1_KeyDown;
         }
 
         private void BuildMenu()
@@ -107,28 +120,28 @@ namespace GrafPack
         {
             ResetClickState();
             currentMode = EditorMode.CreateSquare;
-            MessageBox.Show("Square mode selected.\nClick two opposite corners to create a square.");
+            MessageBox.Show("Square mode selected.\nClick once, move the mouse, then click again.");
         }
 
         private void selectTriangle(object sender, EventArgs e)
         {
             ResetClickState();
             currentMode = EditorMode.CreateTriangle;
-            MessageBox.Show("Triangle mode selected.\nClick two points to define the bounding area.");
+            MessageBox.Show("Triangle mode selected.\nClick once, move the mouse, then click again.");
         }
 
         private void selectCircle(object sender, EventArgs e)
         {
             ResetClickState();
             currentMode = EditorMode.CreateCircle;
-            MessageBox.Show("Circle mode selected.\nClick two points to define the diameter.");
+            MessageBox.Show("Circle mode selected.\nClick once, move the mouse, then click again.");
         }
 
         private void selectShape(object sender, EventArgs e)
         {
             ResetClickState();
             currentMode = EditorMode.Select;
-            MessageBox.Show("Select mode selected.\nClick a shape to select it.");
+            MessageBox.Show("Select mode selected.\nClick a shape to select it, or drag it with the mouse.");
         }
 
         private void deleteShape(object sender, EventArgs e)
@@ -172,26 +185,25 @@ namespace GrafPack
                 if (clickNumber == 0)
                 {
                     firstClick = e.Location;
+                    previewStart = e.Location;
+                    previewCurrent = e.Location;
                     clickNumber = 1;
+                    isPreviewing = true;
+                    Invalidate();
                 }
                 else
                 {
                     secondClick = e.Location;
                     clickNumber = 0;
+                    isPreviewing = false;
 
-                    Shape newShape = null;
-
-                    if (currentMode == EditorMode.CreateSquare)
-                        newShape = new Square(firstClick, secondClick);
-                    else if (currentMode == EditorMode.CreateTriangle)
-                        newShape = new Triangle(firstClick, secondClick);
-                    else if (currentMode == EditorMode.CreateCircle)
-                        newShape = new CircleShape(firstClick, secondClick);
+                    Shape newShape = BuildShape(currentMode, firstClick, secondClick);
 
                     if (newShape != null)
                     {
                         shapes.Add(newShape);
                         SelectOnly(newShape);
+                        selectedShape = newShape;
                         Invalidate();
                     }
 
@@ -200,19 +212,76 @@ namespace GrafPack
             }
         }
 
-        private void SelectShapeAtPoint(Point p)
+        private void Form1_MouseDown(object sender, MouseEventArgs e)
         {
-            selectedShape = null;
+            if (e.Button != MouseButtons.Left)
+                return;
 
+            if (currentMode == EditorMode.Select)
+            {
+                selectedShape = FindShapeAtPoint(e.Location);
+                SelectOnly(selectedShape);
+                Invalidate();
+
+                if (selectedShape != null)
+                {
+                    isDraggingShape = true;
+                    lastMousePoint = e.Location;
+                }
+            }
+        }
+
+        private void Form1_MouseUp(object sender, MouseEventArgs e)
+        {
+            isDraggingShape = false;
+        }
+
+        private void Form1_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (isDraggingShape && selectedShape != null)
+            {
+                float dx = e.X - lastMousePoint.X;
+                float dy = e.Y - lastMousePoint.Y;
+
+                selectedShape.Move(dx, dy);
+                lastMousePoint = e.Location;
+                Invalidate();
+                return;
+            }
+
+            if (isPreviewing && clickNumber == 1)
+            {
+                previewCurrent = e.Location;
+                Invalidate();
+            }
+        }
+
+        private Shape BuildShape(EditorMode mode, Point p1, Point p2)
+        {
+            if (mode == EditorMode.CreateSquare)
+                return new Square(p1, p2);
+            if (mode == EditorMode.CreateTriangle)
+                return new Triangle(p1, p2);
+            if (mode == EditorMode.CreateCircle)
+                return new CircleShape(p1, p2);
+
+            return null;
+        }
+
+        private Shape FindShapeAtPoint(Point p)
+        {
             for (int i = shapes.Count - 1; i >= 0; i--)
             {
                 if (shapes[i].HitTest(p))
-                {
-                    selectedShape = shapes[i];
-                    break;
-                }
+                    return shapes[i];
             }
 
+            return null;
+        }
+
+        private void SelectShapeAtPoint(Point p)
+        {
+            selectedShape = FindShapeAtPoint(p);
             SelectOnly(selectedShape);
             Invalidate();
         }
@@ -253,9 +322,11 @@ namespace GrafPack
         private void ResetClickState()
         {
             clickNumber = 0;
+            isPreviewing = false;
+            isDraggingShape = false;
         }
 
-        private void GrafPack_KeyDown(object sender, KeyEventArgs e)
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
             if (selectedShape == null)
                 return;
@@ -305,14 +376,13 @@ namespace GrafPack
 
             foreach (Shape shape in shapes)
                 shape.Draw(e.Graphics);
-        }
 
-        [STAThread]
-        public static void Main()
-        {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new GrafPack());
+            if (isPreviewing && clickNumber == 1)
+            {
+                Shape previewShape = BuildShape(currentMode, previewStart, previewCurrent);
+                if (previewShape != null)
+                    previewShape.DrawPreview(e.Graphics);
+            }
         }
     }
 
@@ -321,6 +391,18 @@ namespace GrafPack
         public bool IsSelected { get; set; }
 
         public abstract void Draw(Graphics g);
+
+        public virtual void DrawPreview(Graphics g)
+        {
+            using (Pen pen = new Pen(Color.Gray, 1))
+            {
+                pen.DashStyle = DashStyle.Dash;
+                DrawWithPen(g, pen);
+            }
+        }
+
+        protected abstract void DrawWithPen(Graphics g, Pen pen);
+
         public abstract void Move(float dx, float dy);
         public abstract void Rotate(float angleDeg);
         public abstract bool HitTest(Point p);
@@ -363,7 +445,7 @@ namespace GrafPack
         {
             using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
             {
-                DrawPolyline(g, pen, points, true);
+                DrawWithPen(g, pen);
             }
 
             if (IsSelected)
@@ -373,6 +455,11 @@ namespace GrafPack
                     g.FillRectangle(Brushes.Blue, pt.X - 3, pt.Y - 3, 6, 6);
                 }
             }
+        }
+
+        protected override void DrawWithPen(Graphics g, Pen pen)
+        {
+            DrawPolyline(g, pen, points, true);
         }
 
         public override void Move(float dx, float dy)
@@ -487,18 +574,25 @@ namespace GrafPack
         {
             using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
             {
-                PointF[] pts = BuildCirclePoints(72);
-                for (int i = 0; i < pts.Length - 1; i++)
-                {
-                    g.DrawLine(pen, pts[i], pts[i + 1]);
-                }
-                g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
+                DrawWithPen(g, pen);
             }
 
             if (IsSelected)
             {
                 g.FillRectangle(Brushes.Blue, centre.X - 3, centre.Y - 3, 6, 6);
             }
+        }
+
+        protected override void DrawWithPen(Graphics g, Pen pen)
+        {
+            PointF[] pts = BuildCirclePoints(72);
+
+            for (int i = 0; i < pts.Length - 1; i++)
+            {
+                g.DrawLine(pen, pts[i], pts[i + 1]);
+            }
+
+            g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
         }
 
         public override void Move(float dx, float dy)
@@ -508,7 +602,7 @@ namespace GrafPack
 
         public override void Rotate(float angleDeg)
         {
-            // Rotating a circle around its own centre does not change its appearance.
+            // Circle görünüş olarak değişmez.
         }
 
         public override bool HitTest(Point p)
