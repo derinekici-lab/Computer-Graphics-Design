@@ -35,6 +35,10 @@ namespace GrafPack
         private bool isDraggingShape = false;
         private Point lastMousePoint;
 
+        // Status bar
+        private StatusStrip statusStrip;
+        private ToolStripStatusLabel statusLabel;
+
         public Form1()
         {
             InitializeComponent();
@@ -47,12 +51,15 @@ namespace GrafPack
             this.Text = "GrafPack - 2D Drawing Application";
 
             BuildMenu();
+            BuildStatusBar();
 
             this.MouseClick += mouseClick;
             this.MouseMove += Form1_MouseMove;
             this.MouseDown += Form1_MouseDown;
             this.MouseUp += Form1_MouseUp;
             this.KeyDown += Form1_KeyDown;
+
+            UpdateStatus("Application started. Choose Create or Select.");
         }
 
         private void BuildMenu()
@@ -73,6 +80,8 @@ namespace GrafPack
             MenuItem moveDownItem = new MenuItem("Move &Down");
             MenuItem rotateLeftItem = new MenuItem("Rotate &Left");
             MenuItem rotateRightItem = new MenuItem("Rotate &Right");
+            MenuItem reflectHorizontalItem = new MenuItem("Reflect &Horizontal");
+            MenuItem reflectVerticalItem = new MenuItem("Reflect &Vertical");
 
             MenuItem deleteItem = new MenuItem("&Delete");
             MenuItem clearItem = new MenuItem("C&lear All");
@@ -89,6 +98,8 @@ namespace GrafPack
             moveDownItem.Click += (s, e) => MoveSelected(0, 10);
             rotateLeftItem.Click += (s, e) => RotateSelected(-15);
             rotateRightItem.Click += (s, e) => RotateSelected(15);
+            reflectHorizontalItem.Click += (s, e) => ReflectSelectedHorizontal();
+            reflectVerticalItem.Click += (s, e) => ReflectSelectedVertical();
 
             deleteItem.Click += deleteShape;
             clearItem.Click += clearAllShapes;
@@ -105,6 +116,9 @@ namespace GrafPack
             transformItem.MenuItems.Add("-");
             transformItem.MenuItems.Add(rotateLeftItem);
             transformItem.MenuItems.Add(rotateRightItem);
+            transformItem.MenuItems.Add("-");
+            transformItem.MenuItems.Add(reflectHorizontalItem);
+            transformItem.MenuItems.Add(reflectVerticalItem);
 
             mainMenu.MenuItems.Add(createItem);
             mainMenu.MenuItems.Add(selectItem);
@@ -116,11 +130,64 @@ namespace GrafPack
             this.Menu = mainMenu;
         }
 
+        private void BuildStatusBar()
+        {
+            statusStrip = new StatusStrip();
+            statusLabel = new ToolStripStatusLabel();
+
+            statusLabel.Spring = true;
+            statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+
+            statusStrip.Items.Add(statusLabel);
+            statusStrip.Dock = DockStyle.Bottom;
+
+            this.Controls.Add(statusStrip);
+        }
+
+        private void UpdateStatus(string actionText = "")
+        {
+            string modeText = GetModeText();
+            string selectedText = selectedShape == null ? "None" : GetShapeDisplayName(selectedShape);
+
+            string message = "Mode: " + modeText + " | Selected: " + selectedText;
+
+            if (!string.IsNullOrWhiteSpace(actionText))
+                message += " | " + actionText;
+
+            statusLabel.Text = message;
+        }
+
+        private string GetModeText()
+        {
+            switch (currentMode)
+            {
+                case EditorMode.CreateSquare:
+                    return "Create Square";
+                case EditorMode.CreateTriangle:
+                    return "Create Triangle";
+                case EditorMode.CreateCircle:
+                    return "Create Circle";
+                case EditorMode.Select:
+                    return "Select";
+                default:
+                    return "None";
+            }
+        }
+
+        private string GetShapeDisplayName(Shape shape)
+        {
+            if (shape is Square) return "Square";
+            if (shape is Triangle) return "Triangle";
+            if (shape is CircleShape) return "Circle";
+            return "Shape";
+        }
+
         private void selectSquare(object sender, EventArgs e)
         {
             ResetClickState();
             currentMode = EditorMode.CreateSquare;
             MessageBox.Show("Square mode selected.\nClick once, move the mouse, then click again.");
+            UpdateStatus("Square mode ready. Click once, move mouse, click again.");
         }
 
         private void selectTriangle(object sender, EventArgs e)
@@ -128,6 +195,7 @@ namespace GrafPack
             ResetClickState();
             currentMode = EditorMode.CreateTriangle;
             MessageBox.Show("Triangle mode selected.\nClick once, move the mouse, then click again.");
+            UpdateStatus("Triangle mode ready. Click once, move mouse, click again.");
         }
 
         private void selectCircle(object sender, EventArgs e)
@@ -135,6 +203,7 @@ namespace GrafPack
             ResetClickState();
             currentMode = EditorMode.CreateCircle;
             MessageBox.Show("Circle mode selected.\nClick once, move the mouse, then click again.");
+            UpdateStatus("Circle mode ready. Click once, move mouse, click again.");
         }
 
         private void selectShape(object sender, EventArgs e)
@@ -142,19 +211,23 @@ namespace GrafPack
             ResetClickState();
             currentMode = EditorMode.Select;
             MessageBox.Show("Select mode selected.\nClick a shape to select it, or drag it with the mouse.");
+            UpdateStatus("Select mode ready. Click a shape or drag it.");
         }
 
         private void deleteShape(object sender, EventArgs e)
         {
             if (selectedShape != null)
             {
+                string deletedName = GetShapeDisplayName(selectedShape);
                 shapes.Remove(selectedShape);
                 selectedShape = null;
                 Invalidate();
+                UpdateStatus(deletedName + " deleted.");
             }
             else
             {
                 MessageBox.Show("No shape is selected.");
+                UpdateStatus("Delete failed. No shape selected.");
             }
         }
 
@@ -165,6 +238,7 @@ namespace GrafPack
             ResetClickState();
             currentMode = EditorMode.None;
             Invalidate();
+            UpdateStatus("All shapes cleared.");
         }
 
         private void mouseClick(object sender, MouseEventArgs e)
@@ -190,6 +264,7 @@ namespace GrafPack
                     clickNumber = 1;
                     isPreviewing = true;
                     Invalidate();
+                    UpdateStatus("First point chosen. Move the mouse and click again.");
                 }
                 else
                 {
@@ -205,6 +280,7 @@ namespace GrafPack
                         SelectOnly(newShape);
                         selectedShape = newShape;
                         Invalidate();
+                        UpdateStatus(GetShapeDisplayName(newShape) + " created.");
                     }
 
                     currentMode = EditorMode.None;
@@ -227,12 +303,20 @@ namespace GrafPack
                 {
                     isDraggingShape = true;
                     lastMousePoint = e.Location;
+                    UpdateStatus(GetShapeDisplayName(selectedShape) + " selected. Dragging started.");
+                }
+                else
+                {
+                    UpdateStatus("No shape selected.");
                 }
             }
         }
 
         private void Form1_MouseUp(object sender, MouseEventArgs e)
         {
+            if (isDraggingShape && selectedShape != null)
+                UpdateStatus(GetShapeDisplayName(selectedShape) + " moved by drag-and-drop.");
+
             isDraggingShape = false;
         }
 
@@ -284,6 +368,11 @@ namespace GrafPack
             selectedShape = FindShapeAtPoint(p);
             SelectOnly(selectedShape);
             Invalidate();
+
+            if (selectedShape != null)
+                UpdateStatus(GetShapeDisplayName(selectedShape) + " selected.");
+            else
+                UpdateStatus("No shape selected.");
         }
 
         private void SelectOnly(Shape shapeToSelect)
@@ -300,11 +389,13 @@ namespace GrafPack
             if (selectedShape == null)
             {
                 MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Move failed. No shape selected.");
                 return;
             }
 
             selectedShape.Move(dx, dy);
             Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " moved.");
         }
 
         private void RotateSelected(float angleDeg)
@@ -312,11 +403,41 @@ namespace GrafPack
             if (selectedShape == null)
             {
                 MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Rotate failed. No shape selected.");
                 return;
             }
 
             selectedShape.Rotate(angleDeg);
             Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " rotated by " + angleDeg + " degrees.");
+        }
+
+        private void ReflectSelectedHorizontal()
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Reflection failed. No shape selected.");
+                return;
+            }
+
+            selectedShape.ReflectHorizontal();
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " reflected horizontally.");
+        }
+
+        private void ReflectSelectedVertical()
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Reflection failed. No shape selected.");
+                return;
+            }
+
+            selectedShape.ReflectVertical();
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " reflected vertically.");
         }
 
         private void ResetClickState()
@@ -361,11 +482,23 @@ namespace GrafPack
                 RotateSelected(15);
                 e.Handled = true;
             }
+            else if (e.KeyCode == Keys.H)
+            {
+                ReflectSelectedHorizontal();
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.V)
+            {
+                ReflectSelectedVertical();
+                e.Handled = true;
+            }
             else if (e.KeyCode == Keys.Delete)
             {
+                string deletedName = GetShapeDisplayName(selectedShape);
                 shapes.Remove(selectedShape);
                 selectedShape = null;
                 Invalidate();
+                UpdateStatus(deletedName + " deleted.");
                 e.Handled = true;
             }
         }
@@ -405,6 +538,8 @@ namespace GrafPack
 
         public abstract void Move(float dx, float dy);
         public abstract void Rotate(float angleDeg);
+        public abstract void ReflectHorizontal();
+        public abstract void ReflectVertical();
         public abstract bool HitTest(Point p);
         public abstract PointF GetCentre();
 
@@ -477,6 +612,26 @@ namespace GrafPack
             for (int i = 0; i < points.Length; i++)
             {
                 points[i] = RotatePoint(points[i], centre, angleDeg);
+            }
+        }
+
+        public override void ReflectHorizontal()
+        {
+            PointF centre = GetCentre();
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                points[i] = new PointF(points[i].X, 2 * centre.Y - points[i].Y);
+            }
+        }
+
+        public override void ReflectVertical()
+        {
+            PointF centre = GetCentre();
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                points[i] = new PointF(2 * centre.X - points[i].X, points[i].Y);
             }
         }
 
@@ -602,7 +757,17 @@ namespace GrafPack
 
         public override void Rotate(float angleDeg)
         {
-            // Circle görünüş olarak değişmez.
+            // Circle appearance does not change when rotated around its own centre.
+        }
+
+        public override void ReflectHorizontal()
+        {
+            // Circle appearance does not change when reflected around its own centre.
+        }
+
+        public override void ReflectVertical()
+        {
+            // Circle appearance does not change when reflected around its own centre.
         }
 
         public override bool HitTest(Point p)
