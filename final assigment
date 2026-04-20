@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.Windows.Forms;
 
 namespace GrafPack
@@ -14,11 +15,19 @@ namespace GrafPack
             CreateSquare,
             CreateTriangle,
             CreateCircle,
-            Select
+            CreatePentagon,
+            CreateHexagon,
+            CreateStar,
+            CreateDiamond,
+            CreateEllipse
         }
 
         private readonly List<Shape> shapes = new List<Shape>();
         private Shape selectedShape = null;
+        private Shape clipboardShape = null;
+
+        private readonly Stack<EditorState> undoStack = new Stack<EditorState>();
+        private readonly Stack<EditorState> redoStack = new Stack<EditorState>();
 
         private EditorMode currentMode = EditorMode.None;
 
@@ -34,6 +43,12 @@ namespace GrafPack
         // Drag and drop
         private bool isDraggingShape = false;
         private Point lastMousePoint;
+
+        // Resize
+        private bool isResizingShape = false;
+        private int activeHandleIndex = -1;
+        private bool didDragOrResize = false;
+        private bool interactionUndoSaved = false;
 
         // Status bar
         private StatusStrip statusStrip;
@@ -59,7 +74,7 @@ namespace GrafPack
             this.MouseUp += Form1_MouseUp;
             this.KeyDown += Form1_KeyDown;
 
-            UpdateStatus("Application started. Choose Create or Select.");
+            UpdateStatus("Application started. Click a shape to select it. Press F1 for help.");
         }
 
         private void BuildMenu()
@@ -70,44 +85,96 @@ namespace GrafPack
             MenuItem squareItem = new MenuItem("&Square");
             MenuItem triangleItem = new MenuItem("&Triangle");
             MenuItem circleItem = new MenuItem("&Circle");
+            MenuItem pentagonItem = new MenuItem("&Pentagon");
+            MenuItem hexagonItem = new MenuItem("&Hexagon");
+            MenuItem starItem = new MenuItem("S&tar");
+            MenuItem diamondItem = new MenuItem("&Diamond / Rhombus");
+            MenuItem ellipseItem = new MenuItem("&Ellipse");
 
-            MenuItem selectItem = new MenuItem("&Select");
+            MenuItem editItem = new MenuItem("&Edit");
+            MenuItem copyItem = new MenuItem("&Copy");
+            MenuItem pasteItem = new MenuItem("&Paste");
+            MenuItem undoItem = new MenuItem("&Undo");
+            MenuItem redoItem = new MenuItem("&Redo");
 
             MenuItem transformItem = new MenuItem("&Transform");
             MenuItem moveLeftItem = new MenuItem("Move &Left");
             MenuItem moveRightItem = new MenuItem("Move &Right");
             MenuItem moveUpItem = new MenuItem("Move &Up");
             MenuItem moveDownItem = new MenuItem("Move &Down");
+
             MenuItem rotateLeftItem = new MenuItem("Rotate &Left");
             MenuItem rotateRightItem = new MenuItem("Rotate &Right");
+            MenuItem rotate90LeftItem = new MenuItem("Rotate 90° Le&ft");
+            MenuItem rotate90RightItem = new MenuItem("Rotate 90° R&ight");
+            MenuItem rotateByAngleItem = new MenuItem("Rotate by &Angle...");
+
+            MenuItem scaleUpItem = new MenuItem("Scale &Up 10%");
+            MenuItem scaleDownItem = new MenuItem("Scale &Down 10%");
+            MenuItem scaleByFactorItem = new MenuItem("Scale by &Factor...");
+
             MenuItem reflectHorizontalItem = new MenuItem("Reflect &Horizontal");
             MenuItem reflectVerticalItem = new MenuItem("Reflect &Vertical");
 
             MenuItem deleteItem = new MenuItem("&Delete");
             MenuItem clearItem = new MenuItem("C&lear All");
+
+            MenuItem helpItem = new MenuItem("&Help");
+            MenuItem controlsItem = new MenuItem("&Controls / Help");
+
             MenuItem exitItem = new MenuItem("E&xit");
 
             squareItem.Click += selectSquare;
             triangleItem.Click += selectTriangle;
             circleItem.Click += selectCircle;
-            selectItem.Click += selectShape;
+            pentagonItem.Click += selectPentagon;
+            hexagonItem.Click += selectHexagon;
+            starItem.Click += selectStar;
+            diamondItem.Click += selectDiamond;
+            ellipseItem.Click += selectEllipse;
+
+            copyItem.Click += CopySelectedShape;
+            pasteItem.Click += PasteClipboardShape;
+            undoItem.Click += UndoAction;
+            redoItem.Click += RedoAction;
 
             moveLeftItem.Click += (s, e) => MoveSelected(-10, 0);
             moveRightItem.Click += (s, e) => MoveSelected(10, 0);
             moveUpItem.Click += (s, e) => MoveSelected(0, -10);
             moveDownItem.Click += (s, e) => MoveSelected(0, 10);
+
             rotateLeftItem.Click += (s, e) => RotateSelected(-15);
             rotateRightItem.Click += (s, e) => RotateSelected(15);
+            rotate90LeftItem.Click += (s, e) => RotateSelected(-90);
+            rotate90RightItem.Click += (s, e) => RotateSelected(90);
+            rotateByAngleItem.Click += RotateSelectedByCustomAngle;
+
+            scaleUpItem.Click += (s, e) => ScaleSelected(1.1f);
+            scaleDownItem.Click += (s, e) => ScaleSelected(0.9f);
+            scaleByFactorItem.Click += ScaleSelectedByFactor;
+
             reflectHorizontalItem.Click += (s, e) => ReflectSelectedHorizontal();
             reflectVerticalItem.Click += (s, e) => ReflectSelectedVertical();
 
             deleteItem.Click += deleteShape;
             clearItem.Click += clearAllShapes;
+            controlsItem.Click += ShowControlsHelp;
             exitItem.Click += (s, e) => this.Close();
 
             createItem.MenuItems.Add(squareItem);
             createItem.MenuItems.Add(triangleItem);
             createItem.MenuItems.Add(circleItem);
+            createItem.MenuItems.Add(pentagonItem);
+            createItem.MenuItems.Add(hexagonItem);
+            createItem.MenuItems.Add(starItem);
+            createItem.MenuItems.Add(diamondItem);
+            createItem.MenuItems.Add(ellipseItem);
+
+            editItem.MenuItems.Add(copyItem);
+            editItem.MenuItems.Add(pasteItem);
+            editItem.MenuItems.Add("-");
+            editItem.MenuItems.Add(undoItem);
+            editItem.MenuItems.Add(redoItem);
 
             transformItem.MenuItems.Add(moveLeftItem);
             transformItem.MenuItems.Add(moveRightItem);
@@ -116,15 +183,25 @@ namespace GrafPack
             transformItem.MenuItems.Add("-");
             transformItem.MenuItems.Add(rotateLeftItem);
             transformItem.MenuItems.Add(rotateRightItem);
+            transformItem.MenuItems.Add(rotate90LeftItem);
+            transformItem.MenuItems.Add(rotate90RightItem);
+            transformItem.MenuItems.Add(rotateByAngleItem);
+            transformItem.MenuItems.Add("-");
+            transformItem.MenuItems.Add(scaleUpItem);
+            transformItem.MenuItems.Add(scaleDownItem);
+            transformItem.MenuItems.Add(scaleByFactorItem);
             transformItem.MenuItems.Add("-");
             transformItem.MenuItems.Add(reflectHorizontalItem);
             transformItem.MenuItems.Add(reflectVerticalItem);
 
+            helpItem.MenuItems.Add(controlsItem);
+
             mainMenu.MenuItems.Add(createItem);
-            mainMenu.MenuItems.Add(selectItem);
+            mainMenu.MenuItems.Add(editItem);
             mainMenu.MenuItems.Add(transformItem);
             mainMenu.MenuItems.Add(deleteItem);
             mainMenu.MenuItems.Add(clearItem);
+            mainMenu.MenuItems.Add(helpItem);
             mainMenu.MenuItems.Add(exitItem);
 
             this.Menu = mainMenu;
@@ -142,6 +219,55 @@ namespace GrafPack
             statusStrip.Dock = DockStyle.Bottom;
 
             this.Controls.Add(statusStrip);
+        }
+
+        private void ShowControlsHelp(object sender, EventArgs e)
+        {
+            string helpText =
+                "GrafPack Detailed Help\n\n" +
+                "SHAPES\n" +
+                "Square, Triangle, Circle, Pentagon, Hexagon,\n" +
+                "Star, Diamond / Rhombus, Ellipse\n\n" +
+                "SELECTION\n" +
+                "There is no Select menu.\n" +
+                "Click any shape and it becomes selected automatically.\n" +
+                "Click empty space to clear selection.\n\n" +
+                "MOUSE CONTROLS\n" +
+                "Create mode: Click once, move the mouse, click again\n" +
+                "Click selected shape and drag: Move the shape\n" +
+                "Drag blue handles: Resize the shape\n\n" +
+                "EDIT FEATURES\n" +
+                "Copy / Paste available from Edit menu\n" +
+                "Undo / Redo available from Edit menu\n\n" +
+                "TRANSFORM FEATURES\n" +
+                "Move selected shape\n" +
+                "Rotate by fixed steps or custom angle\n" +
+                "Scale shapes proportionally without changing form\n" +
+                "Reflect horizontally or vertically\n\n" +
+                "KEYBOARD SHORTCUTS\n" +
+                "Ctrl + C      Copy selected shape\n" +
+                "Ctrl + V      Paste shape\n" +
+                "Ctrl + Z      Undo\n" +
+                "Ctrl + Y      Redo\n" +
+                "Left Arrow    Move selected shape left\n" +
+                "Right Arrow   Move selected shape right\n" +
+                "Up Arrow      Move selected shape up\n" +
+                "Down Arrow    Move selected shape down\n" +
+                "Q             Rotate left by 15 degrees\n" +
+                "E             Rotate right by 15 degrees\n" +
+                "R             Open custom angle rotation dialog\n" +
+                "+             Scale up by 10%\n" +
+                "-             Scale down by 10%\n" +
+                "H             Reflect horizontally\n" +
+                "V             Reflect vertically\n" +
+                "Backspace     Delete selected shape\n" +
+                "F1            Open this help window\n\n" +
+                "NOTES\n" +
+                "Circle rotation does not visibly change its appearance.\n" +
+                "Use Scale options to enlarge a shape without distorting it.";
+
+            MessageBox.Show(helpText, "Controls / Help", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            UpdateStatus("Detailed help opened.");
         }
 
         private void UpdateStatus(string actionText = "")
@@ -167,8 +293,16 @@ namespace GrafPack
                     return "Create Triangle";
                 case EditorMode.CreateCircle:
                     return "Create Circle";
-                case EditorMode.Select:
-                    return "Select";
+                case EditorMode.CreatePentagon:
+                    return "Create Pentagon";
+                case EditorMode.CreateHexagon:
+                    return "Create Hexagon";
+                case EditorMode.CreateStar:
+                    return "Create Star";
+                case EditorMode.CreateDiamond:
+                    return "Create Diamond";
+                case EditorMode.CreateEllipse:
+                    return "Create Ellipse";
                 default:
                     return "None";
             }
@@ -179,63 +313,96 @@ namespace GrafPack
             if (shape is Square) return "Square";
             if (shape is Triangle) return "Triangle";
             if (shape is CircleShape) return "Circle";
+            if (shape is PentagonShape) return "Pentagon";
+            if (shape is HexagonShape) return "Hexagon";
+            if (shape is StarShape) return "Star";
+            if (shape is DiamondShape) return "Diamond";
+            if (shape is EllipseShape) return "Ellipse";
             return "Shape";
         }
 
         private void selectSquare(object sender, EventArgs e)
         {
-            ResetClickState();
-            currentMode = EditorMode.CreateSquare;
-            MessageBox.Show("Square mode selected.\nClick once, move the mouse, then click again.");
-            UpdateStatus("Square mode ready. Click once, move mouse, click again.");
+            SetCreateMode(EditorMode.CreateSquare, "Square mode ready. Click once, move mouse, click again.");
         }
 
         private void selectTriangle(object sender, EventArgs e)
         {
-            ResetClickState();
-            currentMode = EditorMode.CreateTriangle;
-            MessageBox.Show("Triangle mode selected.\nClick once, move the mouse, then click again.");
-            UpdateStatus("Triangle mode ready. Click once, move mouse, click again.");
+            SetCreateMode(EditorMode.CreateTriangle, "Triangle mode ready. Click once, move mouse, click again.");
         }
 
         private void selectCircle(object sender, EventArgs e)
         {
-            ResetClickState();
-            currentMode = EditorMode.CreateCircle;
-            MessageBox.Show("Circle mode selected.\nClick once, move the mouse, then click again.");
-            UpdateStatus("Circle mode ready. Click once, move mouse, click again.");
+            SetCreateMode(EditorMode.CreateCircle, "Circle mode ready. Click once, move mouse, click again.");
         }
 
-        private void selectShape(object sender, EventArgs e)
+        private void selectPentagon(object sender, EventArgs e)
         {
-            ResetClickState();
-            currentMode = EditorMode.Select;
-            MessageBox.Show("Select mode selected.\nClick a shape to select it, or drag it with the mouse.");
-            UpdateStatus("Select mode ready. Click a shape or drag it.");
+            SetCreateMode(EditorMode.CreatePentagon, "Pentagon mode ready. Click once, move mouse, click again.");
+        }
+
+        private void selectHexagon(object sender, EventArgs e)
+        {
+            SetCreateMode(EditorMode.CreateHexagon, "Hexagon mode ready. Click once, move mouse, click again.");
+        }
+
+        private void selectStar(object sender, EventArgs e)
+        {
+            SetCreateMode(EditorMode.CreateStar, "Star mode ready. Click once, move mouse, click again.");
+        }
+
+        private void selectDiamond(object sender, EventArgs e)
+        {
+            SetCreateMode(EditorMode.CreateDiamond, "Diamond mode ready. Click once, move mouse, click again.");
+        }
+
+        private void selectEllipse(object sender, EventArgs e)
+        {
+            SetCreateMode(EditorMode.CreateEllipse, "Ellipse mode ready. Click once, move mouse, click again.");
+        }
+
+        private void SetCreateMode(EditorMode mode, string statusMessage)
+        {
+            ResetInteractionFlags();
+            currentMode = mode;
+            MessageBox.Show("Shape creation mode selected.\nClick once, move the mouse, then click again.");
+            UpdateStatus(statusMessage);
         }
 
         private void deleteShape(object sender, EventArgs e)
         {
-            if (selectedShape != null)
-            {
-                string deletedName = GetShapeDisplayName(selectedShape);
-                shapes.Remove(selectedShape);
-                selectedShape = null;
-                Invalidate();
-                UpdateStatus(deletedName + " deleted.");
-            }
-            else
+            DeleteSelectedShape();
+        }
+
+        private void DeleteSelectedShape()
+        {
+            if (selectedShape == null)
             {
                 MessageBox.Show("No shape is selected.");
                 UpdateStatus("Delete failed. No shape selected.");
+                return;
             }
+
+            SaveStateForUndo();
+            string deletedName = GetShapeDisplayName(selectedShape);
+            shapes.Remove(selectedShape);
+            selectedShape = null;
+            Invalidate();
+            UpdateStatus(deletedName + " deleted.");
         }
 
         private void clearAllShapes(object sender, EventArgs e)
         {
+            if (shapes.Count == 0)
+            {
+                UpdateStatus("Canvas is already empty.");
+                return;
+            }
+
+            SaveStateForUndo();
             shapes.Clear();
             selectedShape = null;
-            ResetClickState();
+            ResetInteractionFlags();
             currentMode = EditorMode.None;
             Invalidate();
             UpdateStatus("All shapes cleared.");
@@ -246,15 +413,7 @@ namespace GrafPack
             if (e.Button != MouseButtons.Left)
                 return;
 
-            if (currentMode == EditorMode.Select)
-            {
-                SelectShapeAtPoint(e.Location);
-                return;
-            }
-
-            if (currentMode == EditorMode.CreateSquare ||
-                currentMode == EditorMode.CreateTriangle ||
-                currentMode == EditorMode.CreateCircle)
+            if (IsCreateMode(currentMode))
             {
                 if (clickNumber == 0)
                 {
@@ -276,6 +435,7 @@ namespace GrafPack
 
                     if (newShape != null)
                     {
+                        SaveStateForUndo();
                         shapes.Add(newShape);
                         SelectOnly(newShape);
                         selectedShape = newShape;
@@ -288,48 +448,106 @@ namespace GrafPack
             }
         }
 
+        private bool IsCreateMode(EditorMode mode)
+        {
+            return mode == EditorMode.CreateSquare ||
+                   mode == EditorMode.CreateTriangle ||
+                   mode == EditorMode.CreateCircle ||
+                   mode == EditorMode.CreatePentagon ||
+                   mode == EditorMode.CreateHexagon ||
+                   mode == EditorMode.CreateStar ||
+                   mode == EditorMode.CreateDiamond ||
+                   mode == EditorMode.CreateEllipse;
+        }
+
         private void Form1_MouseDown(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left)
                 return;
 
-            if (currentMode == EditorMode.Select)
-            {
-                selectedShape = FindShapeAtPoint(e.Location);
-                SelectOnly(selectedShape);
-                Invalidate();
+            if (IsCreateMode(currentMode))
+                return;
 
-                if (selectedShape != null)
+            didDragOrResize = false;
+            interactionUndoSaved = false;
+
+            if (selectedShape != null)
+            {
+                int handleIndex = selectedShape.HitHandle(e.Location);
+                if (handleIndex >= 0)
                 {
-                    isDraggingShape = true;
-                    lastMousePoint = e.Location;
-                    UpdateStatus(GetShapeDisplayName(selectedShape) + " selected. Dragging started.");
+                    isResizingShape = true;
+                    activeHandleIndex = handleIndex;
+                    UpdateStatus(GetShapeDisplayName(selectedShape) + " resize started.");
+                    return;
                 }
-                else
-                {
-                    UpdateStatus("No shape selected.");
-                }
+            }
+
+            Shape hitShape = FindShapeAtPoint(e.Location);
+            selectedShape = hitShape;
+            SelectOnly(selectedShape);
+            Invalidate();
+
+            if (selectedShape != null)
+            {
+                isDraggingShape = true;
+                lastMousePoint = e.Location;
+                UpdateStatus(GetShapeDisplayName(selectedShape) + " selected automatically.");
+            }
+            else
+            {
+                UpdateStatus("Selection cleared.");
             }
         }
 
         private void Form1_MouseUp(object sender, MouseEventArgs e)
         {
-            if (isDraggingShape && selectedShape != null)
+            if (isDraggingShape && selectedShape != null && didDragOrResize)
                 UpdateStatus(GetShapeDisplayName(selectedShape) + " moved by drag-and-drop.");
 
+            if (isResizingShape && selectedShape != null && didDragOrResize)
+                UpdateStatus(GetShapeDisplayName(selectedShape) + " resized.");
+
             isDraggingShape = false;
+            isResizingShape = false;
+            activeHandleIndex = -1;
+            interactionUndoSaved = false;
         }
 
         private void Form1_MouseMove(object sender, MouseEventArgs e)
         {
+            if (isResizingShape && selectedShape != null && activeHandleIndex >= 0)
+            {
+                if (!interactionUndoSaved)
+                {
+                    SaveStateForUndo();
+                    interactionUndoSaved = true;
+                }
+
+                selectedShape.ResizeByHandle(activeHandleIndex, e.Location);
+                didDragOrResize = true;
+                Invalidate();
+                return;
+            }
+
             if (isDraggingShape && selectedShape != null)
             {
                 float dx = e.X - lastMousePoint.X;
                 float dy = e.Y - lastMousePoint.Y;
 
-                selectedShape.Move(dx, dy);
-                lastMousePoint = e.Location;
-                Invalidate();
+                if (dx != 0 || dy != 0)
+                {
+                    if (!interactionUndoSaved)
+                    {
+                        SaveStateForUndo();
+                        interactionUndoSaved = true;
+                    }
+
+                    selectedShape.Move(dx, dy);
+                    lastMousePoint = e.Location;
+                    didDragOrResize = true;
+                    Invalidate();
+                }
                 return;
             }
 
@@ -348,6 +566,16 @@ namespace GrafPack
                 return new Triangle(p1, p2);
             if (mode == EditorMode.CreateCircle)
                 return new CircleShape(p1, p2);
+            if (mode == EditorMode.CreatePentagon)
+                return new PentagonShape(p1, p2);
+            if (mode == EditorMode.CreateHexagon)
+                return new HexagonShape(p1, p2);
+            if (mode == EditorMode.CreateStar)
+                return new StarShape(p1, p2);
+            if (mode == EditorMode.CreateDiamond)
+                return new DiamondShape(p1, p2);
+            if (mode == EditorMode.CreateEllipse)
+                return new EllipseShape(p1, p2);
 
             return null;
         }
@@ -361,18 +589,6 @@ namespace GrafPack
             }
 
             return null;
-        }
-
-        private void SelectShapeAtPoint(Point p)
-        {
-            selectedShape = FindShapeAtPoint(p);
-            SelectOnly(selectedShape);
-            Invalidate();
-
-            if (selectedShape != null)
-                UpdateStatus(GetShapeDisplayName(selectedShape) + " selected.");
-            else
-                UpdateStatus("No shape selected.");
         }
 
         private void SelectOnly(Shape shapeToSelect)
@@ -393,6 +609,7 @@ namespace GrafPack
                 return;
             }
 
+            SaveStateForUndo();
             selectedShape.Move(dx, dy);
             Invalidate();
             UpdateStatus(GetShapeDisplayName(selectedShape) + " moved.");
@@ -407,9 +624,112 @@ namespace GrafPack
                 return;
             }
 
+            SaveStateForUndo();
             selectedShape.Rotate(angleDeg);
             Invalidate();
             UpdateStatus(GetShapeDisplayName(selectedShape) + " rotated by " + angleDeg + " degrees.");
+        }
+
+        private void RotateSelectedByCustomAngle(object sender, EventArgs e)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Custom rotation failed. No shape selected.");
+                return;
+            }
+
+            string input = Prompt.ShowDialog(
+                "Enter rotation angle in degrees.\nExamples: 90, -45, 180",
+                "Rotate by Angle");
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                UpdateStatus("Custom rotation cancelled.");
+                return;
+            }
+
+            float angle;
+            if (!TryParseFloat(input, out angle))
+            {
+                MessageBox.Show("Please enter a valid numeric angle.");
+                UpdateStatus("Custom rotation failed. Invalid angle.");
+                return;
+            }
+
+            SaveStateForUndo();
+            selectedShape.Rotate(angle);
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " rotated by " + angle + " degrees.");
+        }
+
+        private void ScaleSelected(float factor)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Scaling failed. No shape selected.");
+                return;
+            }
+
+            if (factor <= 0f)
+            {
+                MessageBox.Show("Scale factor must be greater than zero.");
+                UpdateStatus("Scaling failed. Invalid factor.");
+                return;
+            }
+
+            SaveStateForUndo();
+            selectedShape.Scale(factor);
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " scaled by factor " + factor.ToString("0.##") + ".");
+        }
+
+        private void ScaleSelectedByFactor(object sender, EventArgs e)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Custom scaling failed. No shape selected.");
+                return;
+            }
+
+            string input = Prompt.ShowDialog(
+                "Enter scale factor.\nExamples: 1.1 = enlarge 10%\n0.9 = reduce 10%\n2 = double size",
+                "Scale by Factor");
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                UpdateStatus("Custom scaling cancelled.");
+                return;
+            }
+
+            float factor;
+            if (!TryParseFloat(input, out factor) || factor <= 0f)
+            {
+                MessageBox.Show("Please enter a valid factor greater than zero.");
+                UpdateStatus("Custom scaling failed. Invalid factor.");
+                return;
+            }
+
+            SaveStateForUndo();
+            selectedShape.Scale(factor);
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " scaled by factor " + factor.ToString("0.##") + ".");
+        }
+
+        private bool TryParseFloat(string input, out float value)
+        {
+            string cleaned = input.Trim();
+
+            if (float.TryParse(cleaned, NumberStyles.Float, CultureInfo.CurrentCulture, out value))
+                return true;
+
+            if (float.TryParse(cleaned, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+                return true;
+
+            cleaned = cleaned.Replace(',', '.');
+            return float.TryParse(cleaned, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
         }
 
         private void ReflectSelectedHorizontal()
@@ -421,6 +741,7 @@ namespace GrafPack
                 return;
             }
 
+            SaveStateForUndo();
             selectedShape.ReflectHorizontal();
             Invalidate();
             UpdateStatus(GetShapeDisplayName(selectedShape) + " reflected horizontally.");
@@ -435,20 +756,168 @@ namespace GrafPack
                 return;
             }
 
+            SaveStateForUndo();
             selectedShape.ReflectVertical();
             Invalidate();
             UpdateStatus(GetShapeDisplayName(selectedShape) + " reflected vertically.");
         }
 
-        private void ResetClickState()
+        private void CopySelectedShape(object sender, EventArgs e)
+        {
+            if (selectedShape == null)
+            {
+                MessageBox.Show("Please select a shape first.");
+                UpdateStatus("Copy failed. No shape selected.");
+                return;
+            }
+
+            clipboardShape = selectedShape.Clone();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " copied.");
+        }
+
+        private void PasteClipboardShape(object sender, EventArgs e)
+        {
+            if (clipboardShape == null)
+            {
+                MessageBox.Show("Nothing to paste.");
+                UpdateStatus("Paste failed. Clipboard is empty.");
+                return;
+            }
+
+            SaveStateForUndo();
+
+            Shape pasted = clipboardShape.Clone();
+            pasted.Move(20, 20);
+
+            shapes.Add(pasted);
+            selectedShape = pasted;
+            SelectOnly(selectedShape);
+
+            clipboardShape = pasted.Clone();
+
+            Invalidate();
+            UpdateStatus(GetShapeDisplayName(selectedShape) + " pasted.");
+        }
+
+        private void UndoAction(object sender, EventArgs e)
+        {
+            Undo();
+        }
+
+        private void RedoAction(object sender, EventArgs e)
+        {
+            Redo();
+        }
+
+        private void Undo()
+        {
+            if (undoStack.Count == 0)
+            {
+                UpdateStatus("Nothing to undo.");
+                return;
+            }
+
+            redoStack.Push(CaptureState());
+            RestoreState(undoStack.Pop());
+            UpdateStatus("Undo completed.");
+        }
+
+        private void Redo()
+        {
+            if (redoStack.Count == 0)
+            {
+                UpdateStatus("Nothing to redo.");
+                return;
+            }
+
+            undoStack.Push(CaptureState());
+            RestoreState(redoStack.Pop());
+            UpdateStatus("Redo completed.");
+        }
+
+        private void SaveStateForUndo()
+        {
+            undoStack.Push(CaptureState());
+            redoStack.Clear();
+        }
+
+        private EditorState CaptureState()
+        {
+            return new EditorState(shapes, selectedShape);
+        }
+
+        private void RestoreState(EditorState state)
+        {
+            shapes.Clear();
+
+            foreach (Shape shape in state.Shapes)
+                shapes.Add(shape.Clone());
+
+            selectedShape = null;
+            if (state.SelectedIndex >= 0 && state.SelectedIndex < shapes.Count)
+                selectedShape = shapes[state.SelectedIndex];
+
+            SelectOnly(selectedShape);
+            ResetInteractionFlags();
+            currentMode = EditorMode.None;
+            Invalidate();
+        }
+
+        private void ResetInteractionFlags()
         {
             clickNumber = 0;
             isPreviewing = false;
             isDraggingShape = false;
+            isResizingShape = false;
+            activeHandleIndex = -1;
+            didDragOrResize = false;
+            interactionUndoSaved = false;
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
+            if (e.KeyCode == Keys.F1)
+            {
+                ShowControlsHelp(sender, EventArgs.Empty);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Control && e.KeyCode == Keys.C)
+            {
+                CopySelectedShape(sender, EventArgs.Empty);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Control && e.KeyCode == Keys.V)
+            {
+                PasteClipboardShape(sender, EventArgs.Empty);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Control && e.KeyCode == Keys.Z)
+            {
+                Undo();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Control && e.KeyCode == Keys.Y)
+            {
+                Redo();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.KeyCode == Keys.R)
+            {
+                RotateSelectedByCustomAngle(sender, EventArgs.Empty);
+                e.Handled = true;
+                return;
+            }
+
             if (selectedShape == null)
                 return;
 
@@ -482,6 +951,16 @@ namespace GrafPack
                 RotateSelected(15);
                 e.Handled = true;
             }
+            else if (e.KeyCode == Keys.Oemplus || e.KeyCode == Keys.Add)
+            {
+                ScaleSelected(1.1f);
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.OemMinus || e.KeyCode == Keys.Subtract)
+            {
+                ScaleSelected(0.9f);
+                e.Handled = true;
+            }
             else if (e.KeyCode == Keys.H)
             {
                 ReflectSelectedHorizontal();
@@ -492,13 +971,9 @@ namespace GrafPack
                 ReflectSelectedVertical();
                 e.Handled = true;
             }
-            else if (e.KeyCode == Keys.Delete)
+            else if (e.KeyCode == Keys.Back)
             {
-                string deletedName = GetShapeDisplayName(selectedShape);
-                shapes.Remove(selectedShape);
-                selectedShape = null;
-                Invalidate();
-                UpdateStatus(deletedName + " deleted.");
+                DeleteSelectedShape();
                 e.Handled = true;
             }
         }
@@ -522,8 +997,10 @@ namespace GrafPack
     abstract class Shape
     {
         public bool IsSelected { get; set; }
+        protected const int HandleSize = 8;
 
         public abstract void Draw(Graphics g);
+        public abstract Shape Clone();
 
         public virtual void DrawPreview(Graphics g)
         {
@@ -538,10 +1015,30 @@ namespace GrafPack
 
         public abstract void Move(float dx, float dy);
         public abstract void Rotate(float angleDeg);
+        public abstract void Scale(float factor);
         public abstract void ReflectHorizontal();
         public abstract void ReflectVertical();
         public abstract bool HitTest(Point p);
         public abstract PointF GetCentre();
+
+        public abstract int HitHandle(Point p);
+        public abstract void ResizeByHandle(int handleIndex, Point p);
+
+        protected void DrawHandle(Graphics g, Brush brush, PointF pt)
+        {
+            g.FillRectangle(brush, pt.X - HandleSize / 2, pt.Y - HandleSize / 2, HandleSize, HandleSize);
+        }
+
+        protected bool PointHitsHandle(Point p, PointF handlePoint)
+        {
+            RectangleF rect = new RectangleF(
+                handlePoint.X - HandleSize / 2,
+                handlePoint.Y - HandleSize / 2,
+                HandleSize,
+                HandleSize);
+
+            return rect.Contains(p);
+        }
 
         protected PointF RotatePoint(PointF point, PointF pivot, float angleDeg)
         {
@@ -561,14 +1058,10 @@ namespace GrafPack
         protected void DrawPolyline(Graphics g, Pen pen, PointF[] pts, bool closed)
         {
             for (int i = 0; i < pts.Length - 1; i++)
-            {
                 g.DrawLine(pen, pts[i], pts[i + 1]);
-            }
 
             if (closed && pts.Length > 2)
-            {
                 g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
-            }
         }
     }
 
@@ -586,9 +1079,7 @@ namespace GrafPack
             if (IsSelected)
             {
                 foreach (PointF pt in points)
-                {
-                    g.FillRectangle(Brushes.Blue, pt.X - 3, pt.Y - 3, 6, 6);
-                }
+                    DrawHandle(g, Brushes.Blue, pt);
             }
         }
 
@@ -600,9 +1091,7 @@ namespace GrafPack
         public override void Move(float dx, float dy)
         {
             for (int i = 0; i < points.Length; i++)
-            {
                 points[i] = new PointF(points[i].X + dx, points[i].Y + dy);
-            }
         }
 
         public override void Rotate(float angleDeg)
@@ -610,8 +1099,24 @@ namespace GrafPack
             PointF centre = GetCentre();
 
             for (int i = 0; i < points.Length; i++)
-            {
                 points[i] = RotatePoint(points[i], centre, angleDeg);
+        }
+
+        public override void Scale(float factor)
+        {
+            if (factor <= 0f)
+                return;
+
+            PointF centre = GetCentre();
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                float dx = points[i].X - centre.X;
+                float dy = points[i].Y - centre.Y;
+
+                points[i] = new PointF(
+                    centre.X + dx * factor,
+                    centre.Y + dy * factor);
             }
         }
 
@@ -620,9 +1125,7 @@ namespace GrafPack
             PointF centre = GetCentre();
 
             for (int i = 0; i < points.Length; i++)
-            {
                 points[i] = new PointF(points[i].X, 2 * centre.Y - points[i].Y);
-            }
         }
 
         public override void ReflectVertical()
@@ -630,9 +1133,7 @@ namespace GrafPack
             PointF centre = GetCentre();
 
             for (int i = 0; i < points.Length; i++)
-            {
                 points[i] = new PointF(2 * centre.X - points[i].X, points[i].Y);
-            }
         }
 
         public override bool HitTest(Point p)
@@ -654,6 +1155,35 @@ namespace GrafPack
             return new PointF(sumX / points.Length, sumY / points.Length);
         }
 
+        public override int HitHandle(Point p)
+        {
+            if (!IsSelected)
+                return -1;
+
+            for (int i = 0; i < points.Length; i++)
+            {
+                if (PointHitsHandle(p, points[i]))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        public override void ResizeByHandle(int handleIndex, Point p)
+        {
+            if (handleIndex < 0 || handleIndex >= points.Length)
+                return;
+
+            points[handleIndex] = new PointF(p.X, p.Y);
+        }
+
+        protected PointF[] ClonePoints()
+        {
+            PointF[] cloned = new PointF[points.Length];
+            Array.Copy(points, cloned, points.Length);
+            return cloned;
+        }
+
         private bool PointInPolygon(Point p, PointF[] poly)
         {
             bool inside = false;
@@ -670,11 +1200,75 @@ namespace GrafPack
 
             return inside;
         }
+
+        protected static RectangleF GetBounds(Point p1, Point p2)
+        {
+            float left = Math.Min(p1.X, p2.X);
+            float right = Math.Max(p1.X, p2.X);
+            float top = Math.Min(p1.Y, p2.Y);
+            float bottom = Math.Max(p1.Y, p2.Y);
+
+            return new RectangleF(left, top, right - left, bottom - top);
+        }
+
+        protected static PointF[] BuildRegularPolygonPoints(RectangleF bounds, int sides, float startAngleDeg)
+        {
+            PointF[] pts = new PointF[sides];
+            float cx = bounds.Left + bounds.Width / 2f;
+            float cy = bounds.Top + bounds.Height / 2f;
+            float rx = bounds.Width / 2f;
+            float ry = bounds.Height / 2f;
+
+            for (int i = 0; i < sides; i++)
+            {
+                float angleDeg = startAngleDeg + (360f / sides) * i;
+                float angleRad = angleDeg * (float)Math.PI / 180f;
+
+                pts[i] = new PointF(
+                    cx + rx * (float)Math.Cos(angleRad),
+                    cy + ry * (float)Math.Sin(angleRad));
+            }
+
+            return pts;
+        }
     }
 
     class Square : PolygonShape
     {
         public Square(Point keyPt, Point oppPt)
+        {
+            points = BuildPointsFromOppositeCorners(
+                new PointF(keyPt.X, keyPt.Y),
+                new PointF(oppPt.X, oppPt.Y));
+        }
+
+        public override Shape Clone()
+        {
+            Square copy = new Square(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+
+        public override void ResizeByHandle(int handleIndex, Point p)
+        {
+            if (handleIndex < 0 || handleIndex > 3)
+                return;
+
+            int oppositeIndex = (handleIndex + 2) % 4;
+            PointF oppositePoint = points[oppositeIndex];
+            PointF draggedPoint = new PointF(p.X, p.Y);
+
+            PointF[] rebuilt = BuildPointsFromOppositeCorners(draggedPoint, oppositePoint);
+
+            PointF[] reordered = new PointF[4];
+            for (int i = 0; i < 4; i++)
+                reordered[i] = rebuilt[(i - handleIndex + 4) % 4];
+
+            points = reordered;
+        }
+
+        private PointF[] BuildPointsFromOppositeCorners(PointF keyPt, PointF oppPt)
         {
             double xDiff = oppPt.X - keyPt.X;
             double yDiff = oppPt.Y - keyPt.Y;
@@ -686,7 +1280,7 @@ namespace GrafPack
             PointF p3 = new PointF(oppPt.X, oppPt.Y);
             PointF p4 = new PointF((float)(xMid - yDiff / 2.0), (float)(yMid + xDiff / 2.0));
 
-            points = new PointF[] { p1, p2, p3, p4 };
+            return new PointF[] { p1, p2, p3, p4 };
         }
     }
 
@@ -704,6 +1298,112 @@ namespace GrafPack
             PointF c = new PointF(left, bottom);
 
             points = new PointF[] { a, b, c };
+        }
+
+        public override Shape Clone()
+        {
+            Triangle copy = new Triangle(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+    }
+
+    class PentagonShape : PolygonShape
+    {
+        public PentagonShape(Point p1, Point p2)
+        {
+            RectangleF bounds = GetBounds(p1, p2);
+            points = BuildRegularPolygonPoints(bounds, 5, -90f);
+        }
+
+        public override Shape Clone()
+        {
+            PentagonShape copy = new PentagonShape(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+    }
+
+    class HexagonShape : PolygonShape
+    {
+        public HexagonShape(Point p1, Point p2)
+        {
+            RectangleF bounds = GetBounds(p1, p2);
+            points = BuildRegularPolygonPoints(bounds, 6, -90f);
+        }
+
+        public override Shape Clone()
+        {
+            HexagonShape copy = new HexagonShape(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+    }
+
+    class DiamondShape : PolygonShape
+    {
+        public DiamondShape(Point p1, Point p2)
+        {
+            RectangleF b = GetBounds(p1, p2);
+            float cx = b.Left + b.Width / 2f;
+            float cy = b.Top + b.Height / 2f;
+
+            points = new PointF[]
+            {
+                new PointF(cx, b.Top),
+                new PointF(b.Right, cy),
+                new PointF(cx, b.Bottom),
+                new PointF(b.Left, cy)
+            };
+        }
+
+        public override Shape Clone()
+        {
+            DiamondShape copy = new DiamondShape(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+    }
+
+    class StarShape : PolygonShape
+    {
+        public StarShape(Point p1, Point p2)
+        {
+            RectangleF b = GetBounds(p1, p2);
+
+            float cx = b.Left + b.Width / 2f;
+            float cy = b.Top + b.Height / 2f;
+            float outerRx = b.Width / 2f;
+            float outerRy = b.Height / 2f;
+            float innerRx = outerRx * 0.45f;
+            float innerRy = outerRy * 0.45f;
+
+            points = new PointF[10];
+
+            for (int i = 0; i < 10; i++)
+            {
+                float angleDeg = -90f + i * 36f;
+                float angleRad = angleDeg * (float)Math.PI / 180f;
+
+                float rx = (i % 2 == 0) ? outerRx : innerRx;
+                float ry = (i % 2 == 0) ? outerRy : innerRy;
+
+                points[i] = new PointF(
+                    cx + rx * (float)Math.Cos(angleRad),
+                    cy + ry * (float)Math.Sin(angleRad));
+            }
+        }
+
+        public override Shape Clone()
+        {
+            StarShape copy = new StarShape(Point.Empty, new Point(1, 1));
+            copy.points = ClonePoints();
+            copy.IsSelected = IsSelected;
+            return copy;
         }
     }
 
@@ -725,6 +1425,15 @@ namespace GrafPack
                 radius = 1;
         }
 
+        public override Shape Clone()
+        {
+            CircleShape copy = new CircleShape(Point.Empty, new Point(2, 0));
+            copy.centre = centre;
+            copy.radius = radius;
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+
         public override void Draw(Graphics g)
         {
             using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
@@ -734,7 +1443,7 @@ namespace GrafPack
 
             if (IsSelected)
             {
-                g.FillRectangle(Brushes.Blue, centre.X - 3, centre.Y - 3, 6, 6);
+                DrawHandle(g, Brushes.Blue, GetResizeHandlePoint());
             }
         }
 
@@ -743,9 +1452,7 @@ namespace GrafPack
             PointF[] pts = BuildCirclePoints(72);
 
             for (int i = 0; i < pts.Length - 1; i++)
-            {
                 g.DrawLine(pen, pts[i], pts[i + 1]);
-            }
 
             g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
         }
@@ -757,17 +1464,23 @@ namespace GrafPack
 
         public override void Rotate(float angleDeg)
         {
-            // Circle appearance does not change when rotated around its own centre.
+        }
+
+        public override void Scale(float factor)
+        {
+            if (factor <= 0f)
+                return;
+
+            radius *= factor;
+            if (radius < 1) radius = 1;
         }
 
         public override void ReflectHorizontal()
         {
-            // Circle appearance does not change when reflected around its own centre.
         }
 
         public override void ReflectVertical()
         {
-            // Circle appearance does not change when reflected around its own centre.
         }
 
         public override bool HitTest(Point p)
@@ -784,6 +1497,32 @@ namespace GrafPack
             return centre;
         }
 
+        public override int HitHandle(Point p)
+        {
+            if (!IsSelected)
+                return -1;
+
+            return PointHitsHandle(p, GetResizeHandlePoint()) ? 0 : -1;
+        }
+
+        public override void ResizeByHandle(int handleIndex, Point p)
+        {
+            if (handleIndex != 0)
+                return;
+
+            float dx = p.X - centre.X;
+            float dy = p.Y - centre.Y;
+            radius = (float)Math.Sqrt(dx * dx + dy * dy);
+
+            if (radius < 1)
+                radius = 1;
+        }
+
+        private PointF GetResizeHandlePoint()
+        {
+            return new PointF(centre.X + radius, centre.Y);
+        }
+
         private PointF[] BuildCirclePoints(int segments)
         {
             PointF[] pts = new PointF[segments];
@@ -797,6 +1536,260 @@ namespace GrafPack
             }
 
             return pts;
+        }
+    }
+
+    class EllipseShape : Shape
+    {
+        private PointF centre;
+        private float radiusX;
+        private float radiusY;
+        private float rotationAngleDeg;
+
+        public EllipseShape(Point p1, Point p2)
+        {
+            centre = new PointF((p1.X + p2.X) / 2f, (p1.Y + p2.Y) / 2f);
+            radiusX = Math.Abs(p2.X - p1.X) / 2f;
+            radiusY = Math.Abs(p2.Y - p1.Y) / 2f;
+            rotationAngleDeg = 0f;
+
+            if (radiusX < 1) radiusX = 1;
+            if (radiusY < 1) radiusY = 1;
+        }
+
+        public override Shape Clone()
+        {
+            EllipseShape copy = new EllipseShape(Point.Empty, new Point(2, 1));
+            copy.centre = centre;
+            copy.radiusX = radiusX;
+            copy.radiusY = radiusY;
+            copy.rotationAngleDeg = rotationAngleDeg;
+            copy.IsSelected = IsSelected;
+            return copy;
+        }
+
+        public override void Draw(Graphics g)
+        {
+            using (Pen pen = new Pen(IsSelected ? Color.Red : Color.Black, IsSelected ? 3 : 2))
+            {
+                DrawWithPen(g, pen);
+            }
+
+            if (IsSelected)
+            {
+                DrawHandle(g, Brushes.Blue, GetXHandlePoint());
+                DrawHandle(g, Brushes.Blue, GetYHandlePoint());
+            }
+        }
+
+        protected override void DrawWithPen(Graphics g, Pen pen)
+        {
+            PointF[] pts = BuildEllipsePoints(96);
+
+            for (int i = 0; i < pts.Length - 1; i++)
+                g.DrawLine(pen, pts[i], pts[i + 1]);
+
+            g.DrawLine(pen, pts[pts.Length - 1], pts[0]);
+        }
+
+        public override void Move(float dx, float dy)
+        {
+            centre = new PointF(centre.X + dx, centre.Y + dy);
+        }
+
+        public override void Rotate(float angleDeg)
+        {
+            rotationAngleDeg += angleDeg;
+        }
+
+        public override void Scale(float factor)
+        {
+            if (factor <= 0f)
+                return;
+
+            radiusX *= factor;
+            radiusY *= factor;
+
+            if (radiusX < 1) radiusX = 1;
+            if (radiusY < 1) radiusY = 1;
+        }
+
+        public override void ReflectHorizontal()
+        {
+            rotationAngleDeg = -rotationAngleDeg;
+        }
+
+        public override void ReflectVertical()
+        {
+            rotationAngleDeg = -rotationAngleDeg;
+        }
+
+        public override bool HitTest(Point p)
+        {
+            PointF local = ToLocalCoordinates(p);
+            float value = (local.X * local.X) / (radiusX * radiusX) +
+                          (local.Y * local.Y) / (radiusY * radiusY);
+
+            return value <= 1f;
+        }
+
+        public override PointF GetCentre()
+        {
+            return centre;
+        }
+
+        public override int HitHandle(Point p)
+        {
+            if (!IsSelected)
+                return -1;
+
+            if (PointHitsHandle(p, GetXHandlePoint()))
+                return 0;
+
+            if (PointHitsHandle(p, GetYHandlePoint()))
+                return 1;
+
+            return -1;
+        }
+
+        public override void ResizeByHandle(int handleIndex, Point p)
+        {
+            PointF local = ToLocalCoordinates(p);
+
+            if (handleIndex == 0)
+            {
+                radiusX = Math.Abs(local.X);
+                if (radiusX < 1) radiusX = 1;
+            }
+            else if (handleIndex == 1)
+            {
+                radiusY = Math.Abs(local.Y);
+                if (radiusY < 1) radiusY = 1;
+            }
+        }
+
+        private PointF[] BuildEllipsePoints(int segments)
+        {
+            PointF[] pts = new PointF[segments];
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = (float)(2 * Math.PI * i / segments);
+                PointF local = new PointF(
+                    radiusX * (float)Math.Cos(angle),
+                    radiusY * (float)Math.Sin(angle));
+
+                pts[i] = RotatePoint(
+                    new PointF(centre.X + local.X, centre.Y + local.Y),
+                    centre,
+                    rotationAngleDeg);
+            }
+
+            return pts;
+        }
+
+        private PointF GetXHandlePoint()
+        {
+            return RotatePoint(new PointF(centre.X + radiusX, centre.Y), centre, rotationAngleDeg);
+        }
+
+        private PointF GetYHandlePoint()
+        {
+            return RotatePoint(new PointF(centre.X, centre.Y + radiusY), centre, rotationAngleDeg);
+        }
+
+        private PointF ToLocalCoordinates(Point p)
+        {
+            float rad = -rotationAngleDeg * (float)Math.PI / 180f;
+            float cos = (float)Math.Cos(rad);
+            float sin = (float)Math.Sin(rad);
+
+            float tx = p.X - centre.X;
+            float ty = p.Y - centre.Y;
+
+            float lx = tx * cos - ty * sin;
+            float ly = tx * sin + ty * cos;
+
+            return new PointF(lx, ly);
+        }
+    }
+
+    class Prompt
+    {
+        public static string ShowDialog(string text, string caption)
+        {
+            Form prompt = new Form()
+            {
+                Width = 360,
+                Height = 185,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                Text = caption,
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false
+            };
+
+            Label textLabel = new Label()
+            {
+                Left = 15,
+                Top = 15,
+                Width = 310,
+                Height = 50,
+                Text = text
+            };
+
+            TextBox inputBox = new TextBox()
+            {
+                Left = 15,
+                Top = 72,
+                Width = 310
+            };
+
+            Button confirmation = new Button()
+            {
+                Text = "OK",
+                Left = 170,
+                Width = 75,
+                Top = 108,
+                DialogResult = DialogResult.OK
+            };
+
+            Button cancel = new Button()
+            {
+                Text = "Cancel",
+                Left = 250,
+                Width = 75,
+                Top = 108,
+                DialogResult = DialogResult.Cancel
+            };
+
+            prompt.Controls.Add(textLabel);
+            prompt.Controls.Add(inputBox);
+            prompt.Controls.Add(confirmation);
+            prompt.Controls.Add(cancel);
+
+            prompt.AcceptButton = confirmation;
+            prompt.CancelButton = cancel;
+
+            return prompt.ShowDialog() == DialogResult.OK ? inputBox.Text : "";
+        }
+    }
+
+    class EditorState
+    {
+        public List<Shape> Shapes { get; private set; }
+        public int SelectedIndex { get; private set; }
+
+        public EditorState(List<Shape> sourceShapes, Shape selectedShape)
+        {
+            Shapes = new List<Shape>();
+
+            for (int i = 0; i < sourceShapes.Count; i++)
+                Shapes.Add(sourceShapes[i].Clone());
+
+            SelectedIndex = -1;
+            if (selectedShape != null)
+                SelectedIndex = sourceShapes.IndexOf(selectedShape);
         }
     }
 }
